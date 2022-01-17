@@ -4,7 +4,6 @@ import re
 import random
 
 from pathlib import Path
-from typing import List
 
 from lm_dataformat import Reader
 import ftfy
@@ -72,7 +71,7 @@ def parse_args():
     parser.add_argument(
         "--chunks-per-file",
         type=int,
-        default=1048576,
+        default=16384,
         help="How many chunks will be saved into a single file.",
     )
 
@@ -87,11 +86,8 @@ def parse_args():
         help="Use wikitext detokenizer",
     )
     minu_help = "Exclude repetitive documents made up of < MIN_UNIQUE_TOKENS unique tokens. These can produce large gradients."
-    minu_help += (
-        " Set <= 0 to disable. If enabled, 200 is a good default value. (Default: 0)"
-    )
     cleaning_args.add_argument(
-        "--min-unique-tokens", type=int, default=0, help=minu_help
+        "--min-unique-tokens", type=int, default=128, help=minu_help
     )
 
     shuffle_pack_args = parser.add_argument_group("data shuffling/packing arguments")
@@ -247,9 +243,7 @@ def tokenize_docs(raw_files, args, tokenizer):
 
     tokenized_docs = []
 
-    for _ in tqdm(
-        raw_files, mininterval=10, smoothing=0, desc="tokenizing files. patience!"
-    ):
+    for _ in tqdm(raw_files, mininterval=10, smoothing=0, desc="tokenizing"):
         tokenized_docs.extend(tokenized_docs_generator(raw_files, tokenizer, args))
 
     if not args.preserve_data_order:
@@ -337,13 +331,12 @@ def capataz_pt(raw_files, args):
     sequences = split_list(sequences, args.chunks_per_file)
 
     for idx, chunk_group in enumerate(sequences):
-        print(len(chunk_group[12]))
         total_chunk_len = len(chunk_group)
         new_file_path = os.path.join(
             args.output_dir, f"{args.name}_{idx}_{total_chunk_len}.pt"
         )
         print("writing to drive")
-        torch.save(sequences, new_file_path)
+        torch.save(torch.tensor(chunk_group, dtype=torch.int), new_file_path)
         print(f"{args.name}_{idx}_{total_chunk_len}.pt saved")
 
 
