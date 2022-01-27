@@ -87,7 +87,7 @@ def parse_args():
     )
     minu_help = "Exclude repetitive documents made up of < MIN_UNIQUE_TOKENS unique tokens. These can produce large gradients."
     cleaning_args.add_argument(
-        "--min-unique-tokens", type=int, default=128, help=minu_help
+        "--min-unique-tokens", type=int, default=192, help=minu_help
     )
 
     shuffle_pack_args = parser.add_argument_group("data shuffling/packing arguments")
@@ -336,7 +336,7 @@ def capataz_pt(raw_files, args):
             args.output_dir, f"{args.name}_{idx}_{total_chunk_len}.pt"
         )
         print("writing to drive")
-        torch.save(torch.tensor(chunk_group, dtype=torch.int), new_file_path)
+        torch.save(torch.tensor(chunk_group, dtype=torch.float16), new_file_path)
         print(f"{args.name}_{idx}_{total_chunk_len}.pt saved")
 
 
