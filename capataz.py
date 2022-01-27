@@ -4,12 +4,16 @@ import re
 import random
 
 from pathlib import Path
+from unittest import result
 
 from lm_dataformat import Reader
 import ftfy
 from transformers import GPT2TokenizerFast
 from tqdm import tqdm
 import torch
+
+from itertools import repeat
+from multiprocessing import Pool
 
 # adapted from mesh-transformer-jax's create-finetune-tfrecords.py script
 
@@ -67,6 +71,12 @@ def parse_args():
         type=int,
         default=2048,
         help="Training sequence length in tokens. Actual chunk size will be context size + 1 because model labels are shifted one to the right.",
+    )
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=1,
+        help="Number of CPU processes",
     )
     parser.add_argument(
         "--chunks-per-file",
@@ -348,6 +358,17 @@ if __name__ == "__main__":
     raw_files = get_files(args.input_path)
 
     if args.output_format == "pt":
-        capataz_pt(raw_files, args)
+        if args.threads > 1:
+            files = split_list(raw_files, len(raw_files // args.threads))
+            with Pool(processes=args.threads) as pool:
+                progress_bar = tqdm(pool.imap(capataz_pt, zip(raw_files, repeat(args), range(len(raw_files)))))
+                meta = {"discarded": 0, "processed": 0, "successful": 0}
+                for results in progress_bar:
+                    progress_bar.update()
+                    for k, v in results.items():
+                        meta[k] += v
+                print(meta)
+        else:
+            capataz_pt(raw_files, args)
     else:
         raise ValueError(f"output format `{args.output_format}` is not supported")
