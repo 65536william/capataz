@@ -298,7 +298,7 @@ def chunk_and_finalize(tokenized_docs, args, tokenizer):
 
 
 def capataz_pt(raw_files, args):
-
+    raw_files = raw_files[1]
     print("loading tokenizer")
     if args.tokenizer == "gpt-2":
         GPT2TokenizerFast.max_model_input_sizes["gpt2"] = 1e20  # prevents error
@@ -361,7 +361,7 @@ if __name__ == "__main__":
         if args.threads > 1:
             files = split_list(raw_files, len(raw_files) // args.threads)
             with Pool(processes=args.threads) as pool:
-                pbar = tqdm(pool.imap(capataz_pt, zip(files, repeat(args), range(len(files)))))
+                pbar = tqdm(pool.imap(capataz_pt, [enumerate(files), args]))
                 meta = {"discarded": 0, "processed": 0, "successful": 0}
                 for results in pbar:
                     pbar.update()
