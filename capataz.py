@@ -361,10 +361,10 @@ if __name__ == "__main__":
         if args.threads > 1:
             files = split_list(raw_files, len(raw_files) // args.threads)
             with Pool(processes=args.threads) as pool:
-                progress_bar = tqdm(pool.imap(capataz_pt, zip(raw_files, repeat(args), range(len(raw_files)))))
+                pbar = tqdm(pool.imap(capataz_pt, zip(files, repeat(args), range(len(files)))))
                 meta = {"discarded": 0, "processed": 0, "successful": 0}
-                for results in progress_bar:
-                    progress_bar.update()
+                for results in pbar:
+                    pbar.update()
                     for k, v in results.items():
                         meta[k] += v
                 print(meta)
