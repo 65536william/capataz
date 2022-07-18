@@ -1,4 +1,5 @@
 import argparse
+import itertools
 import os
 import re
 import random
@@ -11,8 +12,12 @@ import ftfy
 from transformers import GPT2TokenizerFast
 from tqdm import tqdm
 import torch
+import tensorflow as tf
+from typing import List
 
-from itertools import repeat
+from rich.progress import Progress
+
+import functools
 from multiprocessing import Pool
 
 # adapted from mesh-transformer-jax's create-finetune-tfrecords.py script
@@ -135,7 +140,7 @@ def parse_args():
 
 def get_files(input_path):
 
-    supported_filetypes = ["jsonl.zst", ".txt", ".xz", ".tar.gz"]
+    supported_filetypes = [".jsonl.zst", ".txt", ".xz", ".tar.gz", ".jsonl"]
 
     if input_path.is_dir():
         subfiles_by_type = [
@@ -216,10 +221,9 @@ def split_by_eos_token(raw_docs, eos_token):
 
 
 def clean_and_prepare_and_tokenize_generator(
-    raw_docs, tokenizer, normalize_with_ftfy, normalize_with_wikitext_detokenize
+    raw_docs: List[str], tokenizer, normalize_with_ftfy, normalize_with_wikitext_detokenize
 ):
-
-    for raw_doc in tqdm(raw_docs):
+    for raw_doc in raw_docs:
         if normalize_with_ftfy:
             raw_doc = ftfy.fix_text(raw_doc, normalization="NFKC")
         if normalize_with_wikitext_detokenize:
@@ -229,7 +233,6 @@ def clean_and_prepare_and_tokenize_generator(
 
 
 def tokenized_docs_generator(raw_files, tokenizer, args):
-
     reader = Reader(raw_files)
     raw_docs = reader.stream_data(threaded=False)
     raw_docs = split_by_eos_token(raw_docs, tokenizer.eos_token)
@@ -241,8 +244,7 @@ def tokenized_docs_generator(raw_files, tokenizer, args):
     )
 
 
-def tokenize_docs(raw_files, args, tokenizer):
-
+def tokenize_docs(raw_files: List[str], args, tokenizer):
     if len(raw_files) > 1:
         if args.preserve_data_order:
             print("sorting the raw files")
@@ -253,9 +255,9 @@ def tokenize_docs(raw_files, args, tokenizer):
 
     tokenized_docs = []
 
-    for _ in tqdm(raw_files, mininterval=10, smoothing=0, desc="tokenizing"):
-        tokenized_docs.extend(tokenized_docs_generator(raw_files, tokenizer, args))
-
+    for file in tqdm(raw_files, mininterval=10, smoothing=0, desc="tokenizing", total=len(raw_files)):
+        tokenized_docs.extend(tokenized_docs_generator(file, tokenizer, args))
+    
     if not args.preserve_data_order:
         print("shuffling the tokenized docs")
         random.shuffle(tokenized_docs)
@@ -349,6 +351,66 @@ def capataz_pt(raw_files, args):
         torch.save(torch.tensor(chunk_group, dtype=torch.float16), new_file_path)
         print(f"{args.name}_{idx}_{total_chunk_len}.pt saved")
 
+def capataz_tfrecords(raw_files: List[str], args):
+    """
+        raw_files: list of file paths
+    """
+    print("loading tokenizer")
+    if args.tokenizer == "gpt-2":
+        GPT2TokenizerFast.max_model_input_sizes["gpt2"] = 1e20  # prevents error
+        tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
+    else:
+        raise ValueError(f"tokenizer `{args.tokenizer}` is not supported")
+
+    random.seed(args.seed if args.seed else None)
+
+    # first
+    sequences = []
+    tokenized_docs = tokenize_docs(raw_files, args, tokenizer)
+    capped_sequences, trailing_data = chunk_and_finalize(
+        tokenized_docs, args, tokenizer
+    )
+    sequences.extend(capped_sequences)
+    print(f"there are {len(sequences)} sequences")
+
+    # repacks
+    for repeat_idx in range(1, args.num_repacks):
+        print(f"repacking on iteration {repeat_idx}")
+        if not args.preserve_data_order:
+            random.shuffle(tokenized_docs)
+            capped_sequences, trailing_data = chunk_and_finalize(
+                tokenized_docs, args, tokenizer
+            )
+        else:
+            # if we're preserving data order, we can still "repack" by shifting everything
+            # with the trailing data of the last epoch at the beginning
+            seqs_with_prefix = [trailing_data] + capped_sequences
+            capped_sequences, trailing_data = chunk_and_finalize(
+                seqs_with_prefix, args, tokenizer
+            )
+
+        sequences.extend(capped_sequences)
+
+    # final
+    print(f"dropped {len(trailing_data)} trailing tokens")
+
+    sequences = split_list(sequences, args.chunks_per_file)
+
+    for idx, chunk_group in enumerate(sequences):
+        total_chunk_len = len(chunk_group)
+        new_file_path = os.path.join(
+            args.output_dir, f"{args.name}_{idx}_{total_chunk_len}.tfrecords"
+        )
+        print("writing to drive")
+        with tf.io.TFRecordWriter(new_file_path) as writer:
+            for seq in chunk_group:
+                feature = {
+                    "text": tf.train.Feature(int64_list=tf.train.Int64List(value=seq))
+                }
+                tf_example = tf.train.Example(features=tf.train.Features(feature=feature))
+                writer.write(tf_example.SerializeToString())
+        print(f"{args.name}_{idx}_{total_chunk_len}.tfrecords saved")
+
 
 if __name__ == "__main__":
 
@@ -361,14 +423,18 @@ if __name__ == "__main__":
         if args.threads > 1:
             files = split_list(raw_files, len(raw_files) // args.threads)
             with Pool(processes=args.threads) as pool:
-                pbar = tqdm(pool.imap(capataz_pt, [enumerate(files), args]))
-                meta = {"discarded": 0, "processed": 0, "successful": 0}
-                for results in pbar:
-                    pbar.update()
-                    for k, v in results.items():
-                        meta[k] += v
-                print(meta)
+                x = pool.starmap(capataz_pt, (files, args))
         else:
             capataz_pt(raw_files, args)
+    if args.output_format == "tfrecords":
+        if args.threads > 1:
+            files = split_list(raw_files, len(raw_files) // args.threads) # [threads, files_per_thread]
+            with Progress() as progress:
+                files_bar = progress.add_task("tokenizing files", total=len(files))
+            with Pool(processes=args.threads) as pool:
+                x = pool.starmap(capataz_tfrecords, [(files[i], args) for i in range(args.threads)])
+        else:
+            capataz_tfrecords(raw_files, args)
+
     else:
         raise ValueError(f"output format `{args.output_format}` is not supported")
