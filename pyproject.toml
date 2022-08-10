@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "capataz"
+version = "0.1.0"
+description = ""
+authors = ["William Eliot <75908561+wjeliot@users.noreply.github.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.9, <3.11"
+black = "^22.6.0"
+binpacking = "^1.5.2"
+lm-dataformat = "^0.0.20"
+ftfy = "^6.1.1"
+transformers = "^4.21.1"
+torch = "^1.12.1"
+tensorflow = "^2.9.1"
+rich = "^12.5.1"
+
+[tool.poetry.dev-dependencies]
+pytest = "^5.2"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
