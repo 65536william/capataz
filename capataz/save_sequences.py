@@ -13,7 +13,7 @@ def save_sequences(file_paths: str, args):
                 f"{args['output_name']}_{idx}_{total_sequence_group_len}.pt",
             )
             print("writing to drive")
-            torch.save(torch.tensor(sequence_group, dtype=torch.float16), new_file_path)
+            torch.save(torch.tensor(sequence_group, dtype=torch.int), new_file_path)
             print(f"{new_file_path} saved")
         elif args["output_format"] == "tfrecords":
             new_file_path = os.path.join(
